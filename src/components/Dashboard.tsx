@@ -25,12 +25,14 @@ import {
   WifiOff,
 } from 'lucide-react';
 import { CAMERA_IMAGE, useFarm } from '../context/FarmContext';
-import { apiUrl, CONDITIONS, downloadBlob, formatTime } from '../lib/screening';
+import { CONDITIONS, downloadBlob, formatTime } from '../lib/screening';
+import { fetchJpeg } from '../lib/transport';
+import { useCameraStream } from './CameraImage';
 import type { Page, Scan } from '../lib/screening';
 import { Composition, ConditionBadge, EmptyState, Sparkline } from './ui';
 
 export function StatsGrid() {
-  const { status, scans, isDemo, connected, connecting } = useFarm();
+  const { status, scans, isDemo, connected, connecting, hasScreening, screeningSource } = useFarm();
   const available = isDemo || connected;
   const today = new Date().toDateString();
   const count = scans.filter((scan) => new Date(scan.timestamp).toDateString() === today).length;
@@ -45,7 +47,7 @@ export function StatsGrid() {
         </div>
         <div className="stat-value">
           <span className={`status-dot ${available ? 'online' : ''}`} />
-          {connecting ? 'Connecting' : available ? 'Online' : 'Offline'}
+          {isDemo ? 'Demo' : connected ? 'Online' : connecting ? 'Connecting' : 'Offline'}
         </div>
         <div className="stat-bottom">
           <span>{isDemo ? 'ESP32-CAM · Demo feed' : 'ESP32-CAM · AI Thinker'}</span>
@@ -61,18 +63,22 @@ export function StatsGrid() {
             <Sprout size={18} />
           </span>
         </div>
-        <div className={`stat-value ${available ? `text-${CONDITIONS[status.cls].tone}` : ''}`}>
-          {available ? CONDITIONS[status.cls].short : '—'}
+        <div className={`stat-value ${hasScreening ? `text-${CONDITIONS[status.cls].tone}` : ''}`}>
+          {hasScreening ? (status.cls === 4 ? 'Check leaf' : CONDITIONS[status.cls].short) : '—'}
         </div>
         <div className="stat-bottom">
           <span>
-            {available
+            {hasScreening
               ? status.cls === 1
-                ? 'A happy, healthy-looking leaf'
+                ? screeningSource === 'upload'
+                  ? 'From your uploaded photo'
+                  : screeningSource === 'saved'
+                    ? 'Last saved camera screening'
+                    : 'A healthy-looking leaf'
                 : 'View the screening below'
-              : 'Waiting for your camera'}
+              : 'Upload a photo to start'}
           </span>
-          {available && status.cls === 1 && <Check size={15} className="text-green" />}
+          {hasScreening && status.cls === 1 && <Check size={15} className="text-green" />}
         </div>
       </article>
       <article className="stat-card">
@@ -99,8 +105,8 @@ export function StatsGrid() {
           </span>
         </div>
         <div className="stat-value">
-          {available ? status.green.toFixed(1) : '—'}
-          <span className="percent-unit">{available ? '%' : ''}</span>
+          {hasScreening ? status.green.toFixed(1) : '—'}
+          <span className="percent-unit">{hasScreening ? '%' : ''}</span>
         </div>
         <div className="stat-bottom">
           <span>Of detected leaf pixels</span>
@@ -123,6 +129,8 @@ export function CameraPanel({ large = false }: { large?: boolean }) {
     capture,
     capturing,
     notify,
+    latestScan,
+    gatewayToken,
   } = useFarm();
   const [paused, setPaused] = useState(false);
   const [frozen, setFrozen] = useState('');
@@ -131,13 +139,22 @@ export function CameraPanel({ large = false }: { large?: boolean }) {
   const [version, setVersion] = useState(0);
   const image = useRef<HTMLImageElement>(null);
   const panel = useRef<HTMLElement>(null);
-  const available = isDemo || connected;
+  const savedPreview = !isDemo && !connected && latestScan?.image ? latestScan : null;
+  const { frame, error: streamFailure } = useCameraStream(
+    preferences,
+    gatewayToken,
+    !isDemo && connected && !paused,
+    version,
+  );
+  const available = isDemo || connected || !!savedPreview;
+  const failed = streamError || !!streamFailure;
+  const imageReady = isDemo || !!savedPreview || !!frame || paused;
+  const loadingStream = connected && !imageReady && !failed;
   useEffect(() => {
     setPaused(false);
     setFrozen('');
     setStreamError(false);
-    setVersion((v) => v + 1);
-  }, [preferences.mode, preferences.host, connected]);
+  }, [preferences.mode, preferences.host, preferences.gatewayUrl, connected, savedPreview?.id]);
   useEffect(() => {
     if (!expanded) return;
     const old = document.body.style.overflow;
@@ -204,8 +221,8 @@ export function CameraPanel({ large = false }: { large?: boolean }) {
         <div className="card-heading">
           <div className="heading-group">
             <span className={`status-dot ${available ? 'online' : ''}`} />
-            <h2>Live camera</h2>
-            <span className="subtle-tag">CAM 01</span>
+            <h2>{savedPreview ? 'Leaf preview' : 'Live camera'}</h2>
+            <span className="subtle-tag">{savedPreview ? 'PHOTO' : 'CAM 01'}</span>
           </div>
           <button
             className="icon-button"
@@ -217,7 +234,7 @@ export function CameraPanel({ large = false }: { large?: boolean }) {
           </button>
         </div>
         <div className="camera-stage">
-          {available && !streamError ? (
+          {available && imageReady && !failed ? (
             <>
               <img
                 ref={image}
@@ -225,14 +242,18 @@ export function CameraPanel({ large = false }: { large?: boolean }) {
                 src={
                   paused
                     ? frozen
-                    : isDemo
-                      ? CAMERA_IMAGE
-                      : `${apiUrl('stream', preferences.host)}&v=${version}`
+                    : savedPreview
+                      ? savedPreview.image
+                      : isDemo
+                        ? CAMERA_IMAGE
+                        : frame
                 }
                 alt={
-                  isDemo
-                    ? 'Sample camera frame of a healthy tomato leaf in a greenhouse'
-                    : 'Live ESP32-CAM stream'
+                  savedPreview
+                    ? 'Your saved leaf photo'
+                    : isDemo
+                      ? 'Sample camera frame of a healthy tomato leaf in a greenhouse'
+                      : 'Live ESP32-CAM stream'
                 }
                 onError={() => setStreamError(true)}
               />
@@ -240,36 +261,56 @@ export function CameraPanel({ large = false }: { large?: boolean }) {
               <div className="camera-topline">
                 <span className={`feed-badge ${paused ? 'feed-paused' : ''}`}>
                   <span />
-                  {paused ? 'PAUSED' : isDemo ? 'DEMO FEED' : 'LIVE'}
+                  {savedPreview
+                    ? savedPreview.source === 'upload'
+                      ? 'UPLOADED PHOTO'
+                      : 'SAVED FRAME'
+                    : paused
+                      ? 'PAUSED'
+                      : isDemo
+                        ? 'DEMO FEED'
+                        : 'LIVE'}
                 </span>
                 <span className="resolution-badge">
-                  {isDemo ? 'SAMPLE' : 'QVGA'}
+                  {savedPreview ? 'IMAGE' : isDemo ? 'SAMPLE' : 'QVGA'}
                   <span />
-                  320 × 240
+                  {savedPreview ? 'Saved locally' : '320 × 240'}
                 </span>
               </div>
-              <div className="framing-guide" aria-hidden="true">
-                <i />
-                <i />
-                <i />
-                <i />
-                <span>
-                  <Leaf size={11} /> LEAF SCREENING
-                </span>
-              </div>
+              {!savedPreview && (
+                <div className="framing-guide" aria-hidden="true">
+                  <i />
+                  <i />
+                  <i />
+                  <i />
+                  <span>
+                    <Leaf size={11} /> LEAF SCREENING
+                  </span>
+                </div>
+              )}
               <div className="camera-caption">
                 <div>
                   <span className="camera-location">
                     <Camera size={14} />
-                    {preferences.location}
+                    {savedPreview
+                      ? savedPreview.source === 'upload'
+                        ? 'Your uploaded leaf'
+                        : 'Saved camera capture'
+                      : preferences.location}
                   </span>
                   <span className="camera-meta">
-                    {preferences.name}
+                    {savedPreview ? 'Real screening' : preferences.name}
                     <span>•</span>
-                    {isDemo ? 'Sample image' : formatTime(updatedAt || new Date(), true)}
+                    {savedPreview
+                      ? formatTime(savedPreview.timestamp, true)
+                      : isDemo
+                        ? 'Sample image'
+                        : formatTime(updatedAt || new Date(), true)}
                   </span>
                 </div>
-                <span className="framing-hint">Keep a leaf in the frame</span>
+                <span className="framing-hint">
+                  {savedPreview ? 'Saved result · not live' : 'Keep a leaf in the frame'}
+                </span>
               </div>
               {paused && (
                 <div className="pause-overlay">
@@ -285,29 +326,32 @@ export function CameraPanel({ large = false }: { large?: boolean }) {
             </>
           ) : (
             <div className="camera-disconnected">
-              {connecting ? <LoaderCircle className="spin" size={32} /> : <WifiOff size={32} />}
+              {connecting || loadingStream ? (
+                <LoaderCircle className="spin" size={32} />
+              ) : (
+                <WifiOff size={32} />
+              )}
               <h3>
-                {connecting
-                  ? 'Finding your camera…'
-                  : streamError
+                {connecting || loadingStream
+                  ? 'Loading camera data…'
+                  : failed
                     ? 'The stream is unavailable'
                     : 'Your field, a little closer.'}
               </h3>
               <p>
-                {streamError
-                  ? 'The status may be online, but the video could not load. Check port 81 on your camera.'
-                  : 'Connect your ESP32-CAM to start watching your plants grow.'}
+                {streamFailure ||
+                  (streamError
+                    ? 'The image could not be decoded. Retry or choose another photo.'
+                    : 'Upload a real leaf photo, or connect your ESP32-CAM. No camera readings are simulated.')}
               </p>
               <button
                 className="button button-light"
                 onClick={() =>
-                  streamError
-                    ? (setStreamError(false), setVersion((v) => v + 1))
-                    : setModal('settings')
+                  failed ? (setStreamError(false), setVersion((v) => v + 1)) : setModal('settings')
                 }
               >
-                {streamError ? <RefreshCw size={15} /> : <Wifi size={15} />}
-                {streamError ? 'Retry stream' : 'Connect camera'}
+                {failed ? <RefreshCw size={15} /> : <Wifi size={15} />}
+                {failed ? 'Retry stream' : 'Connect camera'}
               </button>
             </div>
           )}
@@ -316,20 +360,24 @@ export function CameraPanel({ large = false }: { large?: boolean }) {
           <span className="camera-auto">
             <Radio size={14} />
             <span>
-              {paused
-                ? 'Display paused · screening continues'
-                : isDemo
-                  ? 'Sample preview · try a capture'
-                  : status.cls === 0
-                    ? 'Position a leaf in good light'
-                    : 'Auto-screening every 3 seconds'}
+              {savedPreview
+                ? 'Your latest saved screening · not live'
+                : !connected && !isDemo
+                  ? 'Upload a photo or connect a camera'
+                  : paused
+                    ? 'Display paused · screening continues'
+                    : isDemo
+                      ? 'Sample preview · try a capture'
+                      : status.cls === 0
+                        ? 'Position a leaf in good light'
+                        : 'Auto-screening every 3 seconds'}
             </span>
           </span>
           <div className="camera-actions">
             <button
               className="icon-button"
               onClick={togglePause}
-              disabled={!available || streamError}
+              disabled={(!isDemo && !connected) || failed}
               title={paused ? 'Resume stream' : 'Pause stream'}
               aria-label={paused ? 'Resume stream' : 'Pause stream'}
             >
@@ -337,11 +385,11 @@ export function CameraPanel({ large = false }: { large?: boolean }) {
             </button>
             <button
               className="button button-small button-outline capture-button"
-              onClick={() => void capture()}
-              disabled={!available || capturing}
+              onClick={() => (connected || isDemo ? void capture() : setModal('scan'))}
+              disabled={capturing}
             >
               {capturing ? <LoaderCircle size={15} className="spin" /> : <Camera size={15} />}
-              Capture
+              {connected || isDemo ? 'Capture' : 'Upload'}
             </button>
             <button
               className="icon-button"
@@ -359,8 +407,20 @@ export function CameraPanel({ large = false }: { large?: boolean }) {
 }
 
 export function ScreeningPanel() {
-  const { status, isDemo, connected, updatedAt, connecting, refresh, setModal } = useFarm();
-  const available = isDemo || connected;
+  const {
+    status,
+    isDemo,
+    connected,
+    updatedAt,
+    connecting,
+    refresh,
+    setModal,
+    hasScreening,
+    screeningSource,
+    latestScan,
+    setSelectedScan,
+  } = useFarm();
+  const available = hasScreening;
   const condition = CONDITIONS[status.cls];
   return (
     <section className="card screening-card">
@@ -396,13 +456,21 @@ export function ScreeningPanel() {
             </div>
           </div>
           <span className={`screening-label tone-${available ? condition.tone : 'neutral'}`}>
-            {isDemo ? 'Sample' : available ? 'Live' : 'Offline'}
+            {isDemo
+              ? 'Sample'
+              : connected
+                ? 'Live'
+                : screeningSource === 'upload'
+                  ? 'Photo'
+                  : screeningSource === 'saved'
+                    ? 'Saved'
+                    : 'Offline'}
           </span>
         </div>
         <p className="screening-description">
           {available
             ? condition.detail
-            : 'Connect your camera for a fresh look at your plants. We’ll take care of the colour screening.'}
+            : 'Upload a leaf photo or connect your camera. No health result is shown until real pixels are screened.'}
         </p>
         <div className="colour-heading">
           <h3>Colour composition</h3>
@@ -438,12 +506,28 @@ export function ScreeningPanel() {
         </span>
         <button
           className="text-button refresh-button"
-          title={isDemo ? 'About sample readings' : 'Refresh screening'}
-          onClick={() => void refresh()}
+          title={
+            !connected && latestScan && !isDemo
+              ? 'View latest saved screening'
+              : isDemo
+                ? 'About sample readings'
+                : 'Refresh screening'
+          }
+          onClick={() =>
+            !connected && latestScan && !isDemo ? setSelectedScan(latestScan) : void refresh()
+          }
           disabled={connecting}
         >
           <RefreshCw size={12} className={connecting ? 'spin' : ''} />
-          <span>{isDemo ? 'Sample data' : connected && updatedAt ? 'Auto-updated' : 'Retry'}</span>
+          <span>
+            {isDemo
+              ? 'Sample data'
+              : connected && updatedAt
+                ? 'Auto-updated'
+                : latestScan
+                  ? `Saved ${formatTime(latestScan.timestamp)}`
+                  : 'Connect'}
+          </span>
         </button>
       </div>
     </section>
@@ -646,20 +730,36 @@ export function Overview({ onNavigate }: { onNavigate: (page: Page) => void }) {
 }
 
 export function CameraPage() {
-  const { isDemo, notify, preferences } = useFarm();
+  const { isDemo, notify, preferences, gatewayToken, connected, latestScan, setModal } = useFarm();
   const downloadFrame = async () => {
     try {
-      const response = await fetch(isDemo ? CAMERA_IMAGE : apiUrl('jpg', preferences.host), {
-        signal: AbortSignal.timeout(8000),
-      });
-      if (!response.ok) throw new Error();
-      downloadBlob(
-        await response.blob(),
-        isDemo ? 'smartfarm-sample.webp' : `smartfarm-frame-${Date.now()}.jpg`,
+      if (!isDemo && !connected && !latestScan?.image) {
+        setModal('scan');
+        return;
+      }
+      let blob: Blob;
+      if (connected) blob = await fetchJpeg(preferences, gatewayToken);
+      else {
+        const response = await fetch(isDemo ? CAMERA_IMAGE : latestScan!.image!, {
+          signal: AbortSignal.timeout(8000),
+        });
+        if (!response.ok) throw new Error('The saved image could not be read.');
+        blob = await response.blob();
+      }
+      downloadBlob(blob, isDemo ? 'smartfarm-sample.webp' : `smartfarm-frame-${Date.now()}.jpg`);
+      notify(
+        connected
+          ? 'Camera frame downloaded.'
+          : isDemo
+            ? 'Sample image downloaded.'
+            : 'Saved leaf image downloaded.',
       );
-      notify('Your frame has been downloaded.');
-    } catch {
-      notify('Could not download a frame. Check the camera connection and try again.');
+    } catch (e) {
+      notify(
+        e instanceof Error
+          ? e.message
+          : 'Could not download a frame. Check the camera connection and try again.',
+      );
     }
   };
   return (

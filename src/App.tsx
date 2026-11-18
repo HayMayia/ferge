@@ -291,7 +291,9 @@ function Sidebar({
           >
             <Icon size={18} strokeWidth={1.7} />
             <span>{label}</span>
-            {next === 'devices' && <span className="nav-count">01</span>}
+            {next === 'devices' && (
+              <span className="nav-count">{isDemo || preferences.host ? '01' : '00'}</span>
+            )}
           </button>
         ))}
       </nav>
@@ -344,7 +346,7 @@ function Sidebar({
 }
 
 function Topbar({ page, onMenu }: { page: Page; onMenu: () => void }) {
-  const { setModal, isDemo } = useFarm();
+  const { setModal, isDemo, connected } = useFarm();
   const [popover, setPopover] = useState<'notifications' | 'profile' | null>(null);
   const [unread, setUnread] = useState(true);
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -435,7 +437,9 @@ function Topbar({ page, onMenu }: { page: Page; onMenu: () => void }) {
                   <p>
                     {isDemo
                       ? 'You’re exploring a demo. Connect a camera whenever you’re ready.'
-                      : 'Your camera readings refresh automatically. Captures are saved only when you choose.'}
+                      : connected
+                        ? 'Your camera readings refresh automatically. Captures are saved only when you choose.'
+                        : 'Upload a real leaf photo to start screening. No camera is connected and no readings are simulated.'}
                   </p>
                 </div>
               </div>

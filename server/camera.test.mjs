@@ -54,6 +54,7 @@ describe('same-origin local gateway', () => {
     expect(await (await fetch(`${root}/api/health`)).json()).toEqual({
       service: 'smartfarm-camera-gateway',
       ok: true,
+      authRequired: false,
     });
   });
   it('rejects a public target before attempting to fetch', async () => {
@@ -132,5 +133,104 @@ describe('same-origin local gateway', () => {
     const response = await fetch(`${root}/api/camera/status?host=192.168.4.3`);
     expect(response.status).toBe(502);
     expect((await response.json()).error).toContain('too large');
+  });
+});
+
+describe('authenticated cross-origin gateway', () => {
+  const gatewayToken = 'test-only-0123456789-0123456789-0123456789';
+  const origin = 'https://haymayia.github.io';
+  const allowedOrigins = [origin];
+  it('requires an access key before enabling remote website access', () => {
+    expect(() => createApp({ allowedOrigins, gatewayToken: '' })).toThrow('GATEWAY_TOKEN');
+    expect(() => createApp({ gatewayToken: 'short' })).toThrow('32–256');
+    expect(() => createApp({ allowedOrigins: ['*'], gatewayToken })).toThrow();
+    expect(() => createApp({ gatewayToken: ' '.repeat(40) })).toThrow('URL-safe');
+    expect(() => createApp({ allowedOrigins: [origin + '/ferge/'], gatewayToken })).toThrow(
+      'exact origins',
+    );
+  });
+  it('allows an exact website origin to preflight an Authorization header', async () => {
+    const root = await serve({ gatewayToken, allowedOrigins });
+    const response = await fetch(`${root}/api/camera/status?host=192.168.4.3`, {
+      method: 'OPTIONS',
+      headers: {
+        Origin: origin,
+        'Access-Control-Request-Method': 'GET',
+        'Access-Control-Request-Headers': 'authorization',
+        'Access-Control-Request-Private-Network': 'true',
+      },
+    });
+    expect(response.status).toBe(204);
+    expect(response.headers.get('access-control-allow-origin')).toBe(origin);
+    expect(response.headers.get('access-control-allow-headers')).toContain('Authorization');
+    expect(response.headers.get('access-control-allow-private-network')).toBe('true');
+  });
+  it('rejects missing or wrong keys before contacting the camera', async () => {
+    let calls = 0;
+    const root = await serve({
+      gatewayToken,
+      allowedOrigins,
+      fetchCamera: async () => {
+        calls++;
+        return Response.json({});
+      },
+    });
+    for (const Authorization of ['', 'Bearer wrong', `Bearer ${gatewayToken.slice(0, -1)}x`]) {
+      const response = await fetch(`${root}/api/camera/status?host=192.168.4.3`, {
+        headers: { Origin: origin, Authorization },
+      });
+      expect(response.status).toBe(401);
+      expect(response.headers.get('access-control-allow-origin')).toBe(origin);
+    }
+    expect(calls).toBe(0);
+  });
+  it('proxies authenticated requests but never forwards the key to firmware', async () => {
+    let headers;
+    const root = await serve({
+      gatewayToken,
+      allowedOrigins,
+      fetchCamera: async (_url, options) => {
+        headers = options.headers || {};
+        return Response.json({ cls: 1, green: 95, yellow: 3, brown: 2 });
+      },
+    });
+    const response = await fetch(`${root}/api/camera/status?host=192.168.4.3`, {
+      headers: { Origin: origin, Authorization: `Bearer ${gatewayToken}` },
+    });
+    expect(response.status).toBe(200);
+    expect(response.headers.get('access-control-allow-origin')).toBe(origin);
+    expect(JSON.stringify(headers)).not.toContain(gatewayToken);
+    expect((await response.json()).green).toBe(95);
+  });
+  it('rejects unapproved origins even with a correct key', async () => {
+    let calls = 0;
+    const root = await serve({
+      gatewayToken,
+      allowedOrigins,
+      fetchCamera: async () => {
+        calls++;
+        return Response.json({});
+      },
+    });
+    const response = await fetch(`${root}/api/camera/status?host=192.168.4.3`, {
+      headers: { Origin: 'https://attacker.example', Authorization: `Bearer ${gatewayToken}` },
+    });
+    expect(response.status).toBe(403);
+    expect(calls).toBe(0);
+    expect(response.headers.has('access-control-allow-origin')).toBe(false);
+  });
+  it('rejects cross-site image embedding without an Origin header', async () => {
+    const root = await serve({ gatewayToken: '', allowedOrigins: [] });
+    const response = await fetch(`${root}/api/camera/jpg?host=192.168.4.3`, {
+      headers: { 'Sec-Fetch-Site': 'cross-site' },
+    });
+    expect(response.status).toBe(403);
+  });
+  it('prevents third-party browser requests to an unauthenticated local gateway', async () => {
+    const root = await serve({ gatewayToken: '', allowedOrigins: [] });
+    const response = await fetch(`${root}/api/camera/status?host=192.168.4.3`, {
+      headers: { Origin: 'https://attacker.example' },
+    });
+    expect(response.status).toBe(403);
   });
 });

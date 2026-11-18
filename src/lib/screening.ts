@@ -13,6 +13,8 @@ export interface Scan extends Screening {
   id: string;
   timestamp: string;
   source: 'demo' | 'camera' | 'upload';
+  /** New captures analyse their exact JPEG, not a different majority-voted frame. */
+  method?: 'single-frame' | 'firmware';
   image?: string;
 }
 export interface Preferences {
@@ -20,6 +22,8 @@ export interface Preferences {
   host: string;
   name: string;
   location: string;
+  gatewayUrl?: string;
+  demoOptIn?: boolean;
 }
 
 export const CONDITIONS: Record<
@@ -76,10 +80,11 @@ export const CONDITIONS: Record<
 };
 
 export const DEFAULT_PREFERENCES: Preferences = {
-  mode: 'demo',
-  host: '192.168.4.3',
+  mode: 'device',
+  host: '',
   name: 'ESP32-CAM',
-  location: 'North greenhouse',
+  location: 'My farm',
+  gatewayUrl: '',
 };
 
 export const DEMO_SCREENING: Screening = {
@@ -171,11 +176,21 @@ export function parseStatus(value: unknown): Screening {
       throw new Error('The camera returned invalid colour percentages.');
     }
   }
+  // Permit normal decimal rounding, but never render impossible composition bars.
+  if ((data.green as number) + (data.yellow as number) + (data.brown as number) > 100.2) {
+    throw new Error('The camera returned invalid colour totals.');
+  }
   const cls = data.cls as Condition;
   return {
     cls,
-    label: typeof data.label === 'string' ? data.label : CONDITIONS[cls].label,
-    solution: typeof data.solution === 'string' ? data.solution : CONDITIONS[cls].solution,
+    label:
+      typeof data.label === 'string' && data.label.trim()
+        ? data.label.slice(0, 200)
+        : CONDITIONS[cls].label,
+    solution:
+      typeof data.solution === 'string' && data.solution.trim()
+        ? data.solution.slice(0, 2000)
+        : CONDITIONS[cls].solution,
     green: data.green as number,
     yellow: data.yellow as number,
     brown: data.brown as number,
@@ -218,17 +233,23 @@ export function readStored<T>(key: string, fallback: T): T {
 
 export function loadPreferences(): Preferences {
   const stored = readStored<Partial<Preferences> | null>('smartfarm-preferences', null);
-  if (!stored || typeof stored !== 'object') return DEFAULT_PREFERENCES;
+  if (!stored || typeof stored !== 'object') return { ...DEFAULT_PREFERENCES };
+  // Older releases automatically saved demo preferences. They are not user consent.
+  const legacyDemo = stored.mode === 'demo' && stored.demoOptIn !== true;
   return {
-    mode: stored.mode === 'device' ? 'device' : 'demo',
-    host: typeof stored.host === 'string' ? stored.host : DEFAULT_PREFERENCES.host,
+    mode: stored.mode === 'demo' && stored.demoOptIn === true ? 'demo' : 'device',
+    demoOptIn: stored.demoOptIn === true,
+    host: !legacyDemo && typeof stored.host === 'string' ? stored.host.trim() : '',
+    gatewayUrl: typeof stored.gatewayUrl === 'string' ? stored.gatewayUrl.trim() : '',
     name:
       typeof stored.name === 'string' && stored.name.trim()
-        ? stored.name.slice(0, 40)
+        ? stored.name.trim().slice(0, 40)
         : DEFAULT_PREFERENCES.name,
     location:
-      typeof stored.location === 'string' && stored.location.trim()
-        ? stored.location.slice(0, 60)
+      typeof stored.location === 'string' &&
+      stored.location.trim() &&
+      !(legacyDemo && stored.location === 'North greenhouse')
+        ? stored.location.trim().slice(0, 60)
         : DEFAULT_PREFERENCES.location,
   };
 }
@@ -236,55 +257,70 @@ export function loadPreferences(): Preferences {
 export function loadScans(): Scan[] {
   const stored = readStored<unknown>('smartfarm-scans', []);
   if (!Array.isArray(stored)) return [];
-  return stored
-    .filter((scan): scan is Scan => {
-      try {
-        parseStatus(scan);
-        return (
-          typeof scan.id === 'string' &&
-          typeof scan.timestamp === 'string' &&
-          !Number.isNaN(Date.parse(scan.timestamp)) &&
-          ['demo', 'camera', 'upload'].includes(scan.source) &&
-          (scan.image === undefined || typeof scan.image === 'string')
-        );
-      } catch {
-        return false;
-      }
-    })
-    .slice(0, 60);
+  const seen = new Set<string>();
+  const scans: Scan[] = [];
+  for (const value of stored) {
+    try {
+      const result = parseStatus(value);
+      const scan = value as Record<string, unknown>;
+      if (
+        typeof scan.id !== 'string' ||
+        !scan.id ||
+        scan.id.length > 100 ||
+        seen.has(scan.id) ||
+        typeof scan.timestamp !== 'string' ||
+        Number.isNaN(Date.parse(scan.timestamp)) ||
+        !['demo', 'camera', 'upload'].includes(String(scan.source))
+      )
+        continue;
+      seen.add(scan.id);
+      // Local history must never make requests to arbitrary external image URLs.
+      const image =
+        typeof scan.image === 'string' &&
+        scan.image.length < 500_000 &&
+        (/^data:image\/(jpeg|png|webp);base64,[a-zA-Z0-9+/=]+$/.test(scan.image) ||
+          (scan.source === 'demo' &&
+            scan.image === `${import.meta.env.BASE_URL}images/leaf-camera.webp`))
+          ? scan.image
+          : undefined;
+      scans.push({
+        ...result,
+        id: scan.id,
+        timestamp: scan.timestamp,
+        source: scan.source as Scan['source'],
+        image,
+        method:
+          scan.method === 'single-frame'
+            ? 'single-frame'
+            : scan.source === 'camera'
+              ? 'firmware'
+              : undefined,
+      });
+    } catch {
+      /* Ignore corrupt entries without losing valid saved scans. */
+    }
+  }
+  return scans.sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp)).slice(0, 60);
 }
 
-export async function fetchStatus(host: string, signal?: AbortSignal): Promise<Screening> {
-  const response = await fetch(
-    `${import.meta.env.BASE_URL}api/camera/status?host=${encodeURIComponent(host)}`,
-    {
-      signal: signal
-        ? AbortSignal.any([signal, AbortSignal.timeout(6500)])
-        : AbortSignal.timeout(6500),
-      cache: 'no-store',
-    },
-  );
-  if (!response.ok) {
-    const body = await response.json().catch(() => null);
-    throw new Error(
-      body?.error ||
-        'The local camera gateway is unavailable. Run the dashboard on the same network as your camera.',
-    );
-  }
-  let data: unknown;
-  try {
-    data = await response.json();
-  } catch {
-    throw new Error(
-      'The local gateway is unavailable. Start the dashboard on a computer connected to your camera’s Wi-Fi.',
-    );
-  }
-  return parseStatus(data);
+export function createScanId(): string {
+  // randomUUID is unavailable on ordinary HTTP LAN addresses, unlike getRandomValues.
+  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 15) | 64;
+  bytes[8] = (bytes[8] & 63) | 128;
+  const hex = Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-export function apiUrl(kind: 'status' | 'jpg' | 'stream', host: string) {
-  return `${import.meta.env.BASE_URL}api/camera/${kind}?host=${encodeURIComponent(host)}`;
-}
+export const EMPTY_SCREENING: Screening = {
+  cls: 0,
+  label: 'No screening yet',
+  solution: 'Upload a leaf photo or connect a camera.',
+  green: 0,
+  yellow: 0,
+  brown: 0,
+};
 
 export async function analyzeImage(url: string): Promise<{ result: Screening; thumbnail: string }> {
   const image = new Image();
@@ -296,6 +332,9 @@ export async function analyzeImage(url: string): Promise<{ result: Screening; th
   canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   if (!ctx) throw new Error('Image analysis is not supported in this browser.');
+  // Transparent PNG pixels are background, not black pest specks.
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
   const result = analyzePixels(ctx.getImageData(0, 0, canvas.width, canvas.height).data);
   const thumb = document.createElement('canvas');
@@ -325,6 +364,7 @@ export function toCsv(scans: Scan[]): string {
       'Brown %',
       'Source',
       'Recommendation',
+      'Screening method',
     ],
     ...scans.map((s) => [
       s.id,
@@ -335,6 +375,11 @@ export function toCsv(scans: Scan[]): string {
       s.brown,
       s.source,
       s.solution,
+      s.source === 'demo'
+        ? 'sample'
+        : s.source === 'upload' || s.method === 'single-frame'
+          ? 'single-frame HSV'
+          : 'firmware majority vote (not frame-synchronised)',
     ]),
   ];
   return rows

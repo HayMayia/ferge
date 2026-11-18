@@ -6,3 +6,5 @@ coverage/
 package-lock.json
 public/images/
 public/licenses/
+test-results/
+playwright-report/

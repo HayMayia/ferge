@@ -2,6 +2,7 @@ import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Readable } from 'node:stream';
+import { timingSafeEqual } from 'node:crypto';
 import { cameraOrigin } from './camera.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -20,7 +21,24 @@ async function readLimitedBody(body, limit) {
 export function createApp({
   fetchCamera = fetch,
   production = process.env.NODE_ENV === 'production',
+  gatewayToken = process.env.GATEWAY_TOKEN || '',
+  allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean),
 } = {}) {
+  if (gatewayToken && !/^[A-Za-z0-9._~+/-]{32,256}={0,2}$/.test(gatewayToken))
+    throw new Error('GATEWAY_TOKEN must contain 32–256 URL-safe random characters.');
+  if (allowedOrigins.length && !gatewayToken)
+    throw new Error(
+      'GATEWAY_TOKEN is required before allowing another website to use this gateway.',
+    );
+  for (const origin of allowedOrigins) {
+    const url = new URL(origin);
+    if (url.origin !== origin || !['https:', 'http:'].includes(url.protocol))
+      throw new Error('ALLOWED_ORIGINS must contain exact origins, not wildcards or paths.');
+  }
+  const expectedToken = Buffer.from(`Bearer ${gatewayToken}`);
   const app = express();
   app.disable('x-powered-by');
   app.use((_req, res, next) => {
@@ -29,9 +47,53 @@ export function createApp({
     next();
   });
 
+  app.use('/api', (req, res, next) => {
+    res.set('Cache-Control', 'no-store');
+    const origin = req.get('origin');
+    if (!origin && req.get('sec-fetch-site') === 'cross-site') {
+      return res.status(403).json({
+        error: 'Cross-site camera embedding is not allowed. Use the authenticated dashboard.',
+      });
+    }
+    let sameOrigin = false;
+    try {
+      sameOrigin = !!origin && new URL(origin).host === req.get('host');
+    } catch {
+      /* Reject malformed origins. */
+    }
+    if (origin && !sameOrigin && !allowedOrigins.includes(origin)) {
+      return res
+        .status(403)
+        .json({ error: 'This website is not in the gateway’s ALLOWED_ORIGINS list.' });
+    }
+    if (origin) {
+      res.set('Access-Control-Allow-Origin', origin);
+      res.vary('Origin');
+    }
+    if (req.method === 'OPTIONS') {
+      res.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
+      res.set('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+      if (req.get('Access-Control-Request-Private-Network') === 'true')
+        res.set('Access-Control-Allow-Private-Network', 'true');
+      return res.sendStatus(204);
+    }
+    next();
+  });
+
   app.get('/api/health', (_req, res) =>
-    res.json({ service: 'smartfarm-camera-gateway', ok: true }),
+    res.json({ service: 'smartfarm-camera-gateway', ok: true, authRequired: !!gatewayToken }),
   );
+
+  app.use('/api/camera', (req, res, next) => {
+    if (gatewayToken) {
+      const supplied = Buffer.from(req.get('authorization') || '');
+      if (supplied.length !== expectedToken.length || !timingSafeEqual(supplied, expectedToken)) {
+        res.set('WWW-Authenticate', 'Bearer');
+        return res.status(401).json({ error: 'A valid gateway access key is required.' });
+      }
+    }
+    next();
+  });
 
   app.get('/api/camera/:endpoint', async (req, res) => {
     const { endpoint } = req.params;
@@ -65,7 +127,7 @@ export function createApp({
           : endpoint === 'jpg'
             ? 'image/jpeg'
             : 'multipart/x-mixed-replace';
-      if (!contentType.includes(expected))
+      if (contentType.split(';')[0].trim().toLowerCase() !== expected)
         throw new Error('Unexpected camera response. Check the IP address and firmware.');
       res.set('Cache-Control', 'no-store');
       if (endpoint === 'status') {

@@ -28,16 +28,10 @@ import {
   X,
 } from 'lucide-react';
 import { CAMERA_IMAGE, useFarm } from '../context/FarmContext';
-import {
-  analyzeImage,
-  apiUrl,
-  CONDITIONS,
-  downloadBlob,
-  downloadCsv,
-  formatTime,
-} from '../lib/screening';
+import { analyzeImage, CONDITIONS, downloadBlob, downloadCsv, formatTime } from '../lib/screening';
 import type { CameraMode, Page, Preferences, Scan } from '../lib/screening';
 import { Composition, ConditionBadge, Modal } from './ui';
+import { CameraSnapshot } from './CameraImage';
 
 export function Dialogs({ onNavigate }: { onNavigate: (page: Page) => void }) {
   const { modal, setModal, selectedScan, setSelectedScan } = useFarm();
@@ -60,17 +54,34 @@ export function Dialogs({ onNavigate }: { onNavigate: (page: Page) => void }) {
 }
 
 function SettingsDialog() {
-  const { preferences, connectCamera, useDemo, setModal, clearScans } = useFarm();
+  const {
+    preferences,
+    gatewayToken,
+    connectCamera,
+    disconnectCamera,
+    useDemo,
+    setModal,
+    clearScans,
+  } = useFarm();
   const [form, setForm] = useState<Preferences>({ ...preferences });
+  const [accessKey, setAccessKey] = useState(gatewayToken);
+  const connection = useRef(new AbortController());
+  useEffect(() => {
+    connection.current = new AbortController();
+    return () => connection.current.abort();
+  }, []);
   const [busy, setBusy] = useState(false);
+  const submitting = useRef(false);
   const [error, setError] = useState('');
   const [clearArmed, setClearArmed] = useState(false);
   const change = (key: keyof Preferences, value: string) => {
     setForm((prev) => ({ ...prev, [key]: value }));
+    if (key === 'gatewayUrl') setAccessKey('');
     setError('');
   };
   const submit = async (event: FormEvent) => {
     event.preventDefault();
+    if (submitting.current) return;
     const next = {
       ...form,
       name: form.name.trim() || 'ESP32-CAM',
@@ -82,14 +93,17 @@ function SettingsDialog() {
       setModal(null);
       return;
     }
+    submitting.current = true;
     setBusy(true);
     setError('');
     try {
-      await connectCamera(next);
+      await connectCamera(next, accessKey, connection.current.signal);
       setModal(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not connect to the camera.');
+      if (!connection.current.signal.aborted)
+        setError(e instanceof Error ? e.message : 'Could not connect to the camera.');
     } finally {
+      submitting.current = false;
       setBusy(false);
     }
   };
@@ -114,6 +128,7 @@ function SettingsDialog() {
               <button
                 type="button"
                 role="radio"
+                disabled={busy}
                 aria-checked={form.mode === mode}
                 key={mode}
                 className={`mode-option ${form.mode === mode ? 'selected' : ''}`}
@@ -133,6 +148,7 @@ function SettingsDialog() {
                 <span>http://</span>
                 <input
                   id="camera-address"
+                  disabled={busy}
                   required
                   value={form.host}
                   onChange={(event) => change('host', event.target.value)}
@@ -143,11 +159,42 @@ function SettingsDialog() {
                 />
               </div>
               <p className="input-hint">Use the address printed in your camera’s Serial Monitor.</p>
+              <div className="form-grid" style={{ marginTop: 18 }}>
+                <label>
+                  HTTPS gateway URL
+                  <input
+                    type="url"
+                    disabled={busy}
+                    value={form.gatewayUrl || ''}
+                    onChange={(event) => change('gatewayUrl', event.target.value)}
+                    placeholder="https://your-gateway.example.com"
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                </label>
+                <label>
+                  Gateway access key
+                  <input
+                    type="password"
+                    disabled={busy}
+                    value={accessKey}
+                    onChange={(event) => setAccessKey(event.target.value)}
+                    placeholder="Session only"
+                    autoComplete="off"
+                    maxLength={1024}
+                  />
+                </label>
+              </div>
+              <p className="input-hint">
+                Leave the gateway URL blank only when running the dashboard locally. The key is kept
+                in this tab’s session, not in your scan history.
+              </p>
               <div className="connection-note">
                 <Wifi size={17} />
                 <p>
-                  The computer running the gateway must be on the same Wi-Fi as the camera. A hosted
-                  preview or GitHub Pages cannot directly reach a device on your home network.
+                  The gateway must be on your camera’s Wi-Fi. To connect from this published site,
+                  it must have a trusted HTTPS URL, an access key, and allow this website’s origin.
+                  GitHub Pages cannot directly reach your private HTTP camera.
                 </p>
               </div>
             </div>
@@ -166,6 +213,7 @@ function SettingsDialog() {
               Camera name
               <input
                 required
+                disabled={busy}
                 value={form.name}
                 onChange={(event) => change('name', event.target.value)}
                 placeholder="ESP32-CAM"
@@ -176,6 +224,7 @@ function SettingsDialog() {
               Location
               <input
                 required
+                disabled={busy}
                 value={form.location}
                 onChange={(event) => change('location', event.target.value)}
                 placeholder="North greenhouse"
@@ -213,6 +262,19 @@ function SettingsDialog() {
               {clearArmed ? 'Click again to clear saved scans' : 'Clear saved scans'}
             </button>
           </details>
+          {(preferences.host || preferences.mode === 'demo') && (
+            <button
+              type="button"
+              className="text-button"
+              disabled={busy}
+              onClick={() => {
+                disconnectCamera();
+                setModal(null);
+              }}
+            >
+              Use photos only · disconnect camera
+            </button>
+          )}
         </div>
         <div className="modal-footer">
           <button type="button" className="button button-outline" onClick={() => setModal(null)}>
@@ -245,8 +307,20 @@ function NewScanDialog() {
     saveUpload,
     setSelectedScan,
     notify,
+    gatewayToken,
   } = useFarm();
-  const [tab, setTab] = useState<'camera' | 'upload'>('camera');
+  const [tab, setTab] = useState<'camera' | 'upload'>(isDemo || connected ? 'camera' : 'upload');
+  const uploadLock = useRef(false);
+  const work = useRef(new AbortController());
+  const active = useRef(true);
+  useEffect(() => {
+    active.current = true;
+    work.current = new AbortController();
+    return () => {
+      active.current = false;
+      work.current.abort();
+    };
+  }, []);
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState('');
   const [dragging, setDragging] = useState(false);
@@ -261,12 +335,16 @@ function NewScanDialog() {
     [preview],
   );
   const choose = (next?: File) => {
-    if (!next) return;
+    if (!next || uploadLock.current) return;
     if (!['image/jpeg', 'image/png', 'image/webp'].includes(next.type)) {
+      setFile(null);
+      setPreview('');
       setError('Please choose a JPG, PNG, or WebP image.');
       return;
     }
     if (next.size > 12 * 1024 * 1024) {
+      setFile(null);
+      setPreview('');
       setError('Choose an image smaller than 12 MB.');
       return;
     }
@@ -275,11 +353,13 @@ function NewScanDialog() {
     setError('');
   };
   const analyze = async () => {
-    if (!preview) return;
+    if (!preview || uploadLock.current) return;
+    uploadLock.current = true;
     setBusy(true);
     setError('');
     try {
       const { result, thumbnail } = await analyzeImage(preview);
+      if (!active.current) return;
       const scan = saveUpload(result, thumbnail);
       setModal(null);
       setSelectedScan(scan);
@@ -287,6 +367,7 @@ function NewScanDialog() {
     } catch {
       setError('We couldn’t read that image. Try another JPG, PNG, or WebP photo.');
     } finally {
+      uploadLock.current = false;
       setBusy(false);
     }
   };
@@ -325,15 +406,19 @@ function NewScanDialog() {
               <>
                 <div className="scan-preview">
                   {!previewFailed ? (
-                    <img
-                      src={isDemo ? CAMERA_IMAGE : apiUrl('jpg', preferences.host)}
-                      alt={
-                        isDemo
-                          ? 'Sample tomato leaf ready for a demo screening'
-                          : 'Current camera frame'
-                      }
-                      onError={() => setPreviewFailed(true)}
-                    />
+                    isDemo ? (
+                      <img
+                        src={CAMERA_IMAGE}
+                        alt="Sample tomato leaf ready for a demo screening"
+                        onError={() => setPreviewFailed(true)}
+                      />
+                    ) : (
+                      <CameraSnapshot
+                        target={preferences}
+                        token={gatewayToken}
+                        alt="Current real camera frame"
+                      />
+                    )
                   ) : (
                     <div className="preview-error">
                       <Camera size={30} />
@@ -348,7 +433,7 @@ function NewScanDialog() {
                 <p className="scan-modal-description">
                   {isDemo
                     ? 'Try a capture with our sample frame. The result will be clearly marked as a demo scan.'
-                    : 'Capture the current camera frame and save its firmware screening to your history.'}
+                    : 'Capture and screen the exact JPEG. Live readings use the firmware’s separate five-frame vote; saved captures use single-image colour screening.'}
                 </p>
               </>
             ) : (
@@ -392,6 +477,7 @@ function NewScanDialog() {
                   <button
                     className="icon-button"
                     aria-label="Remove selected photo"
+                    disabled={busy}
                     onClick={() => {
                       setFile(null);
                       setPreview('');
@@ -458,7 +544,7 @@ function NewScanDialog() {
           <button
             className="button button-primary"
             disabled={capturing || (!isDemo && !connected)}
-            onClick={() => void capture()}
+            onClick={() => void capture(work.current.signal)}
           >
             {capturing ? <LoaderCircle size={16} className="spin" /> : <ScanIcon />}
             {capturing ? 'Capturing…' : isDemo ? 'Try a sample scan' : 'Capture & screen'}
@@ -557,7 +643,11 @@ function ScanDialog({ scan, onClose }: { scan: Scan; onClose: () => void }) {
         </div>
         <p className="result-disclaimer">
           <ShieldCheck size={14} />
-          Colour-based screening, not a diagnosis. Confirm concerns by eye.
+          {scan.source === 'camera'
+            ? scan.method === 'single-frame'
+              ? 'Exact captured frame · single-image HSV screening, not a diagnosis.'
+              : 'Legacy capture · firmware vote was not synchronised with this JPEG.'
+            : 'Colour-based screening, not a diagnosis. Confirm concerns by eye.'}
         </p>
       </div>
       <div className="modal-footer">
@@ -639,8 +729,10 @@ function HelpDialog() {
               the camera’s status, JPEG, and MJPEG endpoints.
             </p>
             <p>
-              GitHub Pages supports the demo and on-device photo screening; live hardware requires
-              the local gateway.
+              The published site screens uploaded photos without a server. To use live hardware from
+              GitHub Pages, configure a gateway on the camera network with HTTPS, an access key, and
+              this site’s allowed origin. Enter its URL and key in Settings. The repository README
+              has the setup instructions.
             </p>
           </div>
         </div>

@@ -173,7 +173,7 @@ export function DevicesPage() {
       <div className="devices-grid">
         <section className="card device-primary">
           <div className="card-heading">
-            <h2>Your connected camera</h2>
+            <h2>{connected ? 'Your connected camera' : 'Camera setup'}</h2>
             <span className={`device-online ${online ? '' : 'device-offline'}`}>
               <span />
               {isDemo
@@ -203,7 +203,7 @@ export function DevicesPage() {
             </div>
             <span className="device-illustration-tag">
               <Wifi size={13} />
-              {isDemo ? 'SAMPLE DEVICE' : preferences.host}
+              {isDemo ? 'SAMPLE DEVICE' : preferences.host || 'NOT CONFIGURED'}
             </span>
           </div>
           <div className="device-primary-info">
@@ -220,7 +220,7 @@ export function DevicesPage() {
           <div className="device-specs">
             <div>
               <span>Camera address</span>
-              <strong>{isDemo ? 'Demo mode' : preferences.host}</strong>
+              <strong>{isDemo ? 'Demo mode' : preferences.host || 'Not configured'}</strong>
             </div>
             <div>
               <span>Frame resolution</span>
@@ -247,8 +247,8 @@ export function DevicesPage() {
               <div>
                 <h3>Join your farm’s Wi-Fi</h3>
                 <p>
-                  Connect the computer running this dashboard to <code>F450-ESP32-DRONE</code>, the
-                  same access point as the camera.
+                  Connect the computer running the camera gateway to <code>F450-ESP32-DRONE</code>,
+                  the same access point as the camera.
                 </p>
               </div>
             </li>
@@ -267,8 +267,9 @@ export function DevicesPage() {
               <div>
                 <h3>Make the connection</h3>
                 <p>
-                  Open camera settings, select ESP32-CAM, enter its address, and connect. Your live
-                  view will be ready.
+                  Run the included Node.js gateway on that computer. In Settings, enter the camera
+                  IP. From this published site, also enter your gateway’s HTTPS URL and access key;
+                  local hosting can leave the URL blank.
                 </p>
               </div>
             </li>

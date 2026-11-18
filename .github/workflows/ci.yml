@@ -27,5 +27,9 @@ jobs:
         run: npm run check
       - name: Build the website
         run: npm run build
+      - name: Install browser for functional tests
+        run: npx playwright install --with-deps chromium
+      - name: Test real image processing and gateway flows in the browser
+        run: npm run test:browser
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=high

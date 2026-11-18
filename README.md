@@ -2,74 +2,118 @@
 
 **A little insight. A healthier harvest.**
 
-Website URL (after Pages activation below): **[haymayia.github.io/ferge](https://haymayia.github.io/ferge/)**
+**Live website: [haymayia.github.io/ferge](https://haymayia.github.io/ferge/)**
 
-A responsive farm-monitoring website built for the AI Thinker ESP32-CAM firmware supplied with this project. React, TypeScript, and Vite power the interface; a small Node.js gateway connects it to the camera. No account, database, AI API key, or firmware changes are needed.
+A responsive farm-monitoring website for the supplied AI Thinker ESP32-CAM firmware. React, TypeScript, and Vite power the interface; a Node.js gateway connects it to a real camera. No account, database, AI API key, or firmware changes are needed.
 
-## What’s included
+## What works
 
-- **Farm overview:** camera status, current condition, captured scans today, and green/yellow/brown composition.
-- **Camera view:** MJPEG streaming, pause/resume, an expandable frame, JPEG capture, and frame downloads.
-- **Leaf screening:** the firmware’s five condition classes and practical care guidance. No invented confidence score or trained-AI claims.
-- **Photo screening:** drag in a JPG, PNG, or WebP and analyse it entirely in the browser using the firmware’s HSV thresholds.
-- **Scan history:** saved captures and uploads, condition/date/search filters, individual reports, and CSV export.
-- **Devices and settings:** validated camera connections, a setup guide, configurable camera/location names, and clear offline states.
-- **Field guide:** explanations and care suggestions for healthy leaves, yellowing, possible leaf spot, and possible damage.
-- **A clearly labelled demo:** a sample camera photograph and 24 example scans let you explore without hardware.
-- **Accessible navigation:** keyboard search with Ctrl/Cmd+K, focus-managed dialogs, mobile navigation, reduced-motion support, and self-hosted fonts.
+- **Real-first dashboard:** a new workspace starts offline with zero scans and no health result. No camera address or healthy reading is invented.
+- **Photo screening on the published site:** choose a JPG, PNG, or WebP and analyse its actual pixels entirely in your browser. The dashboard, photo preview, history, and reports update with the result.
+- **Live camera:** real `/status` polling, authenticated MJPEG streaming, pause/resume, an expandable frame, JPEG capture, and frame downloads through the gateway.
+- **Exact-frame captures:** saved camera scans screen the JPEG that was actually captured. They do not borrow an unrelated background firmware classification.
+- **History and reports:** real captured/uploaded scans, condition/date/search filters, individual reports, image downloads, and CSV export.
+- **Connection settings:** validated private camera addresses, an optional HTTPS gateway URL and session access key, cancellation, disconnect, useful errors, and offline/reconnection handling.
+- **Field guide:** explanations and care guidance for the firmware's condition classes, without invented confidence scores or trained-AI claims.
+- **Optional examples only:** the sample photograph and 24 sample scans appear only after explicitly choosing a demo workspace. They are labelled, excluded from real mode, and never represented as live hardware. Screening a real upload exits demo mode.
+- **Existing responsive design:** keyboard search with Ctrl/Cmd+K, focus-managed dialogs, mobile navigation, reduced-motion support, and self-hosted fonts.
 
-## Run the website
+Previously automatically enabled demo preferences are migrated to real/offline mode. Existing real captures and uploaded-photo results are preserved.
 
-Use **Node.js 22.12 or newer**.
+## Try real screening now
+
+1. Open [the published website](https://haymayia.github.io/ferge/).
+2. Select **New scan → Upload a photo**.
+3. Choose one well-lit leaf photo and select **Screen this leaf**.
+4. View its actual green/yellow/brown composition, then **Export scan** if you want a CSV.
+5. Close the result to see the saved photo and reading on the overview. The camera correctly remains **Offline** until hardware is connected.
+
+The image is analysed locally; it is not sent to a third-party AI service. This is **colour screening, not a trained disease/pest detector or a diagnosis**.
+
+## Run the website and gateway locally
+
+Use **Node.js 22.12 or newer**. The source and publishing branch is `arena/c581980e-ferge`:
 
 ```bash
+git clone --branch arena/c581980e-ferge https://github.com/HayMayia/ferge.git
+cd ferge
 npm ci
 npm run dev
 ```
 
-Open **http://localhost:5173**. This starts:
+If the repository is already checked out on that branch, start with `npm ci`.
+
+Open **http://localhost:5173** on that computer, or `http://<that-computer's-LAN-IP>:5173` from another device on the same network. This starts:
 
 | Service        | Port | Purpose                                               |
 | -------------- | ---- | ----------------------------------------------------- |
-| Vite website   | 5173 | The browser interface and same-origin `/api` proxy    |
+| Vite website   | 5173 | Browser interface and same-origin `/api` proxy        |
 | Camera gateway | 3001 | Connects to the ESP32 on the computer’s local network |
 
-Both services bind to `0.0.0.0`. The interface uses relative API URLs, so browser previews and another phone/computer on the same network can also use the dashboard. Keep the gateway on a trusted network; it is not an authenticated public service.
+Both services bind to `0.0.0.0`. Browser requests use the website's origin, not another computer's `localhost`. With no access key configured, use this only on a **trusted local network**, never as an unauthenticated internet service.
 
-The default workspace is a **demo**. Sample frames, readings, and history are identified in the interface. Sample history is hidden when you connect a real device.
+For a production local build:
+
+```bash
+npm run build
+npm start
+```
+
+This serves both the website and gateway on port **3001**. The production start command also works on Windows; it does not rely on Unix environment-variable syntax. Optional `.env` settings are loaded by the server. Restart it after changing those settings.
 
 ## Connect your ESP32-CAM
 
-1. Upload your supplied sketch with **AI Thinker ESP32-CAM** selected and **PSRAM enabled**. Use the upload/reset procedure in your sketch’s comments.
-2. Leave `USE_AP` set to `false` to join the drone’s **F450-ESP32-DRONE** access point.
-3. Connect the computer running this website/gateway to that same access point. The gateway—not just the browser—must be able to reach the camera.
-4. In the Arduino Serial Monitor at **115200 baud**, find the camera’s printed IP address. The example address `192.168.4.3` is only a placeholder; use the address your board actually prints.
-5. Open **Settings → ESP32-CAM**, enter that IPv4 address, and select **Connect camera**.
-6. Open **Live camera**, put a leaf close to the camera in good, even light, and capture a scan.
+1. Upload your supplied sketch with **AI Thinker ESP32-CAM** selected and **PSRAM enabled**. Follow the sketch's upload/reset procedure.
+2. Leave `USE_AP` set to `false` to join **F450-ESP32-DRONE**.
+3. Connect the **computer running the gateway** to that same access point. The gateway—not just the browser—must be able to reach the camera. If the access point has no internet, install/build the website before joining it; the local dashboard does not need internet once started.
+4. Open the Arduino Serial Monitor at **115200 baud** after resetting the camera. Use the IP printed by your board. `192.168.4.3` in the form is a placeholder, not an assigned address.
+5. In the locally served website, open **Settings → ESP32-CAM**, enter that IPv4 address, leave **HTTPS gateway URL** blank, and select **Connect camera**. If you configured a gateway access key, enter that key too.
+6. Status is verified before the workspace changes to online. Open **Live camera**, put a leaf in good light, and capture a scan.
 
-The gateway uses the exact endpoints from your sketch:
+### Use the GitHub Pages website with a real camera
 
-| Firmware endpoint | Port | Website behaviour                                                                           |
-| ----------------- | ---- | ------------------------------------------------------------------------------------------- |
-| `GET /status`     | 80   | Fetches condition, recommendation, and colour percentages every 3 seconds                   |
-| `GET /jpg`        | 80   | Captures/downloads a JPEG; a saved camera scan uses a subsequent firmware status response   |
-| `GET /stream`     | 81   | Forwards MJPEG without buffering and stops the upstream request when the viewer disconnects |
+**GitHub Pages is static hosting. It cannot run Node.js or directly contact your private HTTP ESP32.** An HTTPS gateway on the camera network is necessary for live hardware from the public website. Uploaded-photo screening, history, and exports work without it.
 
-The browser calls `/api/camera/status`, `/api/camera/jpg`, and `/api/camera/stream`; it never calls another service at the browser’s own `localhost`. The gateway restricts targets to private IPv4 addresses and fixed firmware ports/endpoints, rejects redirects, bounds response sizes, and times out failed requests. It does not provide general-purpose URL proxying.
+The included gateway supports authenticated remote browser access:
 
-### Hosted preview versus a local camera
+1. On the camera-network computer, copy `.env.example` to `.env`.
+2. Generate a unique random key **locally**:
 
-**A cloud preview or GitHub Pages site cannot directly reach a camera on your home/drone Wi-Fi.** GitHub Pages is static hosting and does not run the Node.js gateway. HTTPS pages also cannot simply embed an insecure private HTTP camera stream reliably.
+   ```bash
+   node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
+   ```
 
-Use the hosted site for **demo mode, local photo screening, history, and exports**. For real hardware, run this repository on a computer connected to the drone access point. The included gateway serves the camera through the same origin as the website, avoiding mixed-content and cross-origin browser issues.
+3. Edit `.env` on that computer:
+   - Set `GATEWAY_TOKEN` to the generated key. Use 32–256 bearer-safe characters, without spaces.
+   - Set `ALLOWED_ORIGINS=https://haymayia.github.io`. This is the **origin only**, not the `/ferge/` page path. Multiple exact origins may be comma-separated; wildcards are rejected.
+   - Set `PORT` if needed; the default is `3001`.
+4. Run `npm run build` and `npm start`. Put the gateway behind a **trusted HTTPS reverse proxy, authenticated network tunnel, or private VPN with HTTPS** that can reach this computer. Preserve the `Authorization` header and streaming responses, disable proxy buffering, and allow long-lived video connections. Do not forward the raw ESP32 ports to the internet.
+5. Verify that `https://<your-gateway>/api/health` returns `service: "smartfarm-camera-gateway"` and `authRequired: true`. This verifies the **gateway**, not a camera connection.
+6. On [the published dashboard](https://haymayia.github.io/ferge/), open **Settings → ESP32-CAM** and enter:
+   - **Camera IP address:** the private IP from the ESP32 Serial Monitor.
+   - **HTTPS gateway URL:** your reachable, trusted HTTPS origin, without `/api`, a path, or a query.
+   - **Gateway access key:** your generated key.
+7. Select **Connect camera**. A successful, validated `/status` response is required. The stream and JPEG requests use the same authenticated gateway.
 
-Do not expose the camera, its credentials, or this unauthenticated gateway directly to the public internet. Remote production access would need an authenticated, TLS-protected network bridge/VPN and appropriate deployment hardening.
+A reachable HTTPS endpoint, certificate, and network/tunnel setup must be provided on your farm network; this repository does **not** silently provision one or claim that a camera is connected. Some browsers also ask permission to access local-network devices. Allow it only for your trusted gateway. Never disable browser security or TLS certificate checks to make production access work.
+
+The access key is sent in an **Authorization header**, never a URL or a CSV. It is scoped to the selected gateway in this tab's session storage, not permanent preferences. Changing the gateway URL clears the form's old key. **Use photos only · disconnect camera** removes the current key and disconnects without deleting scan history. `.env` is ignored by Git; never put real keys in the public source or in chat.
+
+### Firmware endpoints
+
+| Firmware endpoint | Port | Website behaviour                                                                                                  |
+| ----------------- | ---- | ------------------------------------------------------------------------------------------------------------------ |
+| `GET /status`     | 80   | Polls the real firmware classification, recommendation, and colour percentages every 3 seconds                     |
+| `GET /jpg`        | 80   | Captures/downloads an actual JPEG; saved scans analyse that exact image with the firmware's HSV thresholds         |
+| `GET /stream`     | 81   | Forwards MJPEG without buffering; the browser decodes length-delimited JPEG parts and aborts when paused or closed |
+
+Browser endpoints are `/api/camera/status`, `/api/camera/jpg`, and `/api/camera/stream`, either on the website's local origin or the configured HTTPS gateway. The gateway restricts camera targets to private IPv4 addresses and fixed firmware ports/endpoints, rejects redirects, bounds status/JPEG response sizes, times out stalled requests, and cancels disconnected streams. It is not a general-purpose URL proxy.
+
+Remote access requires an access key and an exact allowed origin. These are safeguards, not a substitute for a hardened network deployment. Keep the camera and gateway updated and private.
 
 ## Screening behaviour and limitations
 
-This is **colour-based screening, not a disease diagnosis or trained AI model**. No photos are sent to Gemini or another third-party service.
-
-The browser photo screener follows the supplied firmware’s decision order:
+This is **colour-based screening, not disease diagnosis or a trained AI model**. The browser screener follows the supplied firmware's decision order:
 
 1. Less than **5%** leaf-coloured sampled pixels → no leaf in view.
 2. Dark share strictly between **0.5% and 8%**, with green above **25% of leaf pixels** → possible pest/leaf damage.
@@ -77,96 +121,86 @@ The browser photo screener follows the supplied firmware’s decision order:
 4. Yellow above **25% of leaf pixels** → yellowing.
 5. Otherwise → healthy-looking leaf.
 
-Composition percentages are fractions of **leaf-coloured pixels**, not the entire image, and are not confidence scores. The on-screen corner marks are a fixed framing guide, not AI object localisation.
+Composition percentages are fractions of **leaf-coloured pixels**, not the entire image, and are not confidence scores. The corner marks are a fixed framing guide, not object localisation. Transparent photo areas are treated as background, not black damage specks.
 
-The ESP32 supplies its own five-frame majority-vote classification. Uploaded photos are single-image screenings with the same thresholds but no temporal vote. Browser canvas pixels are RGB, so the ESP32-specific `RGB_IS_BGR` swap is not applied a second time.
+**Live readings** use the ESP32's own five-result majority-vote classification. **Saved camera captures and uploaded photos** are single-image screenings of the exact image, with the same HSV thresholds but no temporal vote. They can differ from the live reading. Reports include the screening method. Legacy camera scans are identified as unsynchronised firmware readings rather than silently relabelled as exact-frame results.
 
-Lighting, backgrounds, shadows, and natural leaf colour can all affect results. Inspect both sides of a leaf and confirm concerns with a local agronomist before treatment.
+Browser images are analysed at up to 640 pixels on their longest side, and thumbnails are at most 320 pixels. Canvas provides RGB, so the firmware-specific `RGB_IS_BGR` swap is not applied a second time. Lighting, backgrounds, shadows, resizing, JPEG compression, and natural leaf colour affect results. Confirm any concern by eye and speak with a local agronomist before treatment.
 
 ## Data and privacy
 
-- Preferences and up to **60 manually saved captures/uploads** are stored in this browser’s local storage.
-- A small compressed thumbnail is retained rather than the original full-resolution upload. Downloads from a saved result contain this retained image.
-- Live status polling does **not** continuously fill scan history.
-- The 24 demo examples are generated locally, separate from saved scans.
-- History is not synchronised between devices, and there is no cloud account or backend database.
-- **Settings → Data & privacy → Clear saved scans** removes local saved scans. Browser storage can also be cleared manually.
-- If storage is disabled or full, the app continues in memory; when possible it saves metadata without thumbnails.
-- CSV exports escape quoted text and neutralise spreadsheet formulas.
-- The demonstration greenhouse image is an AI-generated illustration, not a live hardware capture.
+- Preferences and up to **60 manually saved captures/uploads** are stored in this browser's local storage.
+- Small compressed thumbnails, not original full-resolution uploads, are retained. Saved-result downloads contain the retained image.
+- Live polling does **not** continuously fill history. There is no cloud account, cloud history database, or device-to-device synchronisation.
+- Explicit demo examples are generated separately, labelled, and hidden in real mode. The demonstration image is AI-generated, not a live hardware capture.
+- **Settings → Data & privacy → Clear saved scans** removes local captures/uploads. It does not remove the optional example set.
+- If storage is disabled/full, the app continues in memory and warns you to export. Where possible it saves metadata without photos.
+- Corrupt history entries are skipped without discarding valid scans. CSV exports quote text and neutralise spreadsheet formulas.
 
-## Checks and production build
+## Tests and verification
 
 ```bash
-npm run check   # strict TypeScript check and 55 unit/integration tests
-npm run build   # optimised static website in dist/
-npm start       # production website + camera gateway on port 3001
+npm run format:check
+npm run check          # strict TypeScript and unit/integration tests
+npm run build
+npm audit --omit=dev
+
+# Install a browser once, then run the functional suite:
+npx playwright install chromium
+npm run test:browser
 ```
 
-Set `PORT` if you need another production port. Production builds should use the default base path `/` when served by the bundled gateway.
+On Linux, `npx playwright install --with-deps chromium` also installs required system libraries. Browser gateway tests require **OpenSSL** and a non-loopback network interface to create a temporary TLS fixture. Certificate/key files are generated in a temporary directory and removed; only that fixture's browser tests accept its self-signed certificate. The application has no TLS bypass. For a separately running build, set `SMARTFARM_E2E_BASE_URL` to its URL. The private gateway tests are omitted when testing an external HTTPS static deployment.
 
-Tests cover HSV classes and threshold boundaries, pest priority, telemetry validation, sample data, CSV safety, target validation, status/JPEG/MJPEG forwarding, response bounds, and offline errors. The interface was also browser-tested at mobile, tablet, and desktop widths, including a simulated camera. Physical ESP32 testing still requires your hardware and network.
+The browser suite verifies fresh/legacy state, actual green/yellow/brown/dark/transparent pixels, invalid/oversized images, duplicate-click protection, dashboard updates, persistence, storage-disabled exports, navigation, and responsive layout. A real HTTPS test gateway also exercises bearer authentication, CORS, MJPEG decoding, pause/resume and cleanup, exact-frame capture, independent stream failures, camera offline/recovery, cancellation, and disconnect. Only the upstream ESP32 responses are simulated in these tests.
 
-Production dependencies pass `npm audit --omit=dev`. At implementation time, `npm audit` reports an upstream development-only `picomatch` regular-expression denial-of-service advisory inherited by Vite/Vitest; no patched `picomatch` release was available in the registry. Build/test globs are trusted project configuration, not user input. Recheck the advisory and update development dependencies when a patch is released.
+**Software tests are not physical hardware verification.** A real board/network check must still confirm the printed IP, `/status`, `/jpg`, `:81/stream`, continuous operation, captures, and disconnect/reconnect behaviour. No physical ESP32 is attached to this development environment, so that check has not been claimed as completed. Colour-screening accuracy is not medically/agronomically validated.
+
+Production dependencies pass `npm audit --omit=dev`. At implementation time, the full development audit reports an upstream `picomatch` regular-expression denial-of-service advisory inherited by Vite/Vitest; no patched release was available in the registry. Build/test globs are trusted project configuration, not user input. Recheck the advisory when upgrading development tools.
 
 ## GitHub Pages publishing
 
-**Website URL after activation:** [https://haymayia.github.io/ferge/](https://haymayia.github.io/ferge/)
+**Published and activated:** [https://haymayia.github.io/ferge/](https://haymayia.github.io/ferge/)
 
-This uses the same publishing method as [HayMayia/Data](https://haymayia.github.io/Data/): **GitHub Pages → Deploy from a branch → `/docs`**. The source branch for this site is `arena/c581980e-ferge`. No temporary preview server is needed for the public website.
+The repository uses the same publishing method as [HayMayia/Data](https://haymayia.github.io/Data/): **Settings → Pages → Deploy from a branch → `arena/c581980e-ferge` → `/docs`**. The owner activation has already been completed; no temporary sandbox preview is needed for the website.
 
-### One-time owner setting
-
-The website files are pushed and ready, but the connected GitHub integration was denied permission to create the Pages site (`403 Resource not accessible by integration`). A repository owner can activate hosting without changing any code:
-
-1. Open [this repository’s Pages settings](https://github.com/HayMayia/ferge/settings/pages).
-2. Under **Build and deployment → Source**, choose **Deploy from a branch**.
-3. Choose branch **`arena/c581980e-ferge`** and folder **`/docs`**, then click **Save**.
-4. Wait for GitHub’s first Pages deployment to succeed. The website URL above will then become available.
-
-Alternatively, reconnect GitHub in Arena with the repository permissions needed to manage Pages, then retry activation. No passwords or access tokens should be shared in chat.
-
-The committed `docs/` directory is an optimised static build of the existing interface, with the `/ferge/` asset base path and a `.nojekyll` file. Publishing does not change the UI. The build is deliberately tracked because branch-based GitHub Pages serves the committed files directly.
-
-To update the website after editing the source:
+`docs/` is the committed static build with a `/ferge/` asset base and `.nojekyll`. Do not edit generated files directly. To publish updates:
 
 ```bash
 npm ci
+npm run format:check
 npm run check
 npm run build:pages
 ```
 
-Commit the source changes and rebuilt `docs/` together, then push the same publishing branch. GitHub Pages automatically redeploys the `/docs` folder. Keep that branch available while it is selected as the Pages source; deleting it stops future publishing. To change the source later, update **Settings → Pages** explicitly.
+Commit source changes and the rebuilt `docs/` together, then push the same publishing branch. GitHub Pages automatically redeploys `/docs`. Keep that branch available while it is the Pages source. No custom deployment workflow is required.
 
-The **Check Smartfarm** workflow runs formatting checks, type checking, tests, a production build, and a production-dependency audit on pushes and pull requests. Pages publishing uses GitHub’s built-in branch deployment after the one-time owner setting above; no custom deployment workflow is required.
+The **Check Smartfarm** workflow runs formatting, type checks, unit/integration tests, a production build, browser functional tests, and the production-dependency audit. Hash navigation keeps all five pages refresh-safe on static hosting.
 
-For another static host, deploy `dist/`. `npm run build` and `npm start` still build and serve the normal root-path website plus its local camera gateway. `npm run build:pages` is a separate static-only build for GitHub Pages.
-
-Hash-based navigation keeps all pages refresh-safe on static hosts. The public site supports demo mode, browser-local photo screening, history, and exports. Real-camera mode still requires the local gateway described above; GitHub Pages cannot run the Node.js server or reach your private Wi-Fi camera.
+For another static host, deploy `dist/` from `npm run build`. The bundled Node production server expects that root-path build. `npm run build:pages` is a separate static-only build; publishing it does not deploy the gateway.
 
 ## Project structure
 
 ```text
 src/
-  App.tsx                    Workspace, navigation, and page routing
-  components/                Dashboard, device/history/guide pages, and dialogs
-  context/FarmContext.tsx    Device polling, capture flows, and local persistence
-  lib/screening.ts           Firmware-compatible colour analysis and CSV helpers
-  lib/screening.test.ts      Screening and data tests
-  fonts.css                  Self-hosted variable fonts
-  styles.css                 Responsive interface
+  App.tsx                    Workspace, navigation, and hash routing
+  components/                Dashboard, pages, dialogs, and camera decoding UI
+  context/FarmContext.tsx    Polling, exact-frame captures, and local persistence
+  lib/screening.ts           HSV screening, history validation, and CSV helpers
+  lib/transport.ts           Authenticated, bounded camera requests
+  lib/mjpeg.ts               Incremental Content-Length MJPEG decoder
+  lib/*.test.ts              Unit and regression tests
+  styles.css                 Existing responsive interface
 server/
-  app.mjs                    Same-origin status, JPEG, and MJPEG gateway
+  app.mjs                    Local/authenticated cross-origin camera gateway
   camera.mjs                 Restricted camera-target validation
-  camera.test.mjs            Gateway integration and validation tests
-  index.mjs                  Gateway/production server entry point
-public/
-  images/leaf-camera.webp    Clearly labelled demonstration image
-docs/
-  index.html                 Published GitHub Pages build (generated; do not edit directly)
-  assets/                    Compiled JavaScript, CSS, and self-hosted fonts
-.github/workflows/
-  ci.yml                     Checks for pushes and pull requests
+  camera.test.mjs            Gateway/security integration tests
+  index.mjs                  Environment loading and server entry point
+tests/browser/               Functional browser tests and simulated ESP32 fixture
+.env.example                 Non-secret local/remote gateway configuration
+public/images/               Clearly labelled demonstration image
+docs/                        Generated GitHub Pages build
+.github/workflows/ci.yml     Automated quality checks
 ```
 
-Third-party font, icon, and React notices are included in `public/licenses/`. Use `npm run format` to format the source, or `npm run format:check` to verify formatting.
+Third-party font, icon, and React notices are in `public/licenses/`. Use `npm run format` to format source changes.
