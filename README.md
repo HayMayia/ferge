@@ -127,7 +127,7 @@ npm run build:pages
 
 Commit the source changes and rebuilt `docs/` together, then push the same publishing branch. GitHub Pages automatically redeploys the `/docs` folder. Keep that branch available while it is selected as the Pages source; deleting it stops future publishing. To change the source later, update **Settings → Pages** explicitly.
 
-The **Check Smartfarm** workflow runs formatting checks, type checking, tests, a production build, and a production-dependency audit on pushes and pull requests. Pages publishing itself uses GitHub's built-in branch deployment, not the previous manual Actions deployment workflow.
+The **Check Smartfarm** workflow runs formatting checks, type checking, tests, a production build, and a production-dependency audit on pushes and pull requests. **Configure Smartfarm Pages** only ensures the selected branch’s `/docs` hosting is enabled using the repository’s own scoped token; it does not build or change the UI. Pages publishing itself uses GitHub’s built-in branch deployment.
 
 For another static host, deploy `dist/`. `npm run build` and `npm start` still build and serve the normal root-path website plus its local camera gateway. `npm run build:pages` is a separate static-only build for GitHub Pages.
 
@@ -156,6 +156,7 @@ docs/
   assets/                    Compiled JavaScript, CSS, and self-hosted fonts
 .github/workflows/
   ci.yml                     Checks for pushes and pull requests
+  pages.yml                  Ensures branch-based /docs hosting is enabled
 ```
 
 Third-party font, icon, and React notices are included in `public/licenses/`. Use `npm run format` to format the source, or `npm run format:check` to verify formatting.

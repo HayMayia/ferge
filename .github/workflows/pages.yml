@@ -1,0 +1,48 @@
+name: Configure Smartfarm Pages
+
+# Hosting still uses the same branch + /docs method as HayMayia/Data.
+# This workflow only enables that setting using the repository's own scoped token.
+on:
+  push:
+    branches:
+      - arena/c581980e-ferge
+    paths:
+      - '.github/workflows/pages.yml'
+      - 'docs/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+
+concurrency:
+  group: configure-smartfarm-pages
+  cancel-in-progress: false
+
+jobs:
+  configure:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enable branch-based Pages hosting
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PAGES_BRANCH: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          error_file="$RUNNER_TEMP/pages-error.txt"
+          if gh api "repos/$GH_REPO/pages" > "$RUNNER_TEMP/pages.json" 2> "$error_file"; then
+            gh api --method PUT "repos/$GH_REPO/pages" \
+              -f build_type=legacy \
+              -f "source[branch]=$PAGES_BRANCH" \
+              -f 'source[path]=/docs'
+          elif grep -q 'HTTP 404' "$error_file"; then
+            gh api --method POST "repos/$GH_REPO/pages" \
+              -f build_type=legacy \
+              -f "source[branch]=$PAGES_BRANCH" \
+              -f 'source[path]=/docs'
+          else
+            cat "$error_file" >&2
+            exit 1
+          fi
